@@ -1,0 +1,126 @@
+# docker-compose.airflow.yml
+# Chạy riêng với: docker compose -f docker-compose.airflow.yml up -d
+#
+# Bao gồm:
+#   - PostgreSQL  : metadata database cho Airflow
+#   - airflow-init: khởi tạo DB + tạo user admin (chỉ chạy 1 lần)
+#   - webserver   : giao diện web tại http://localhost:8080
+#   - scheduler   : engine chạy DAG theo lịch
+#
+# Credentials mặc định: admin / admin
+
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.9.2-python3.11
+  environment:
+    # Dùng LocalExecutor + PostgreSQL thay vì SQLite để ổn định hơn
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__FERNET_KEY: ""
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
+
+    # Trỏ DAGS_FOLDER vào thư mục dags/ của project (đã mount bên dưới)
+    AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/project/dags
+
+    # Python cần tìm thấy src/ và scripts/ của project
+    PYTHONPATH: /opt/airflow/project
+
+    # Biến môi trường của project (đọc từ .env)
+    GCP_PROJECT_ID: ${GCP_PROJECT_ID}
+    BIGQUERY_DATASET: ${BIGQUERY_DATASET}
+    ALERT_RISK_THRESHOLD: ${ALERT_RISK_THRESHOLD}
+    ARCHIVE_DAYS_THRESHOLD: ${ARCHIVE_DAYS_THRESHOLD}
+    # Parquet sẽ ghi vào volume data_lake/ bên trong container
+    ARCHIVE_OUTPUT_DIR: /opt/airflow/data_lake
+    # GCS bucket để upload Parquet sau khi ghi local (không có gs:// prefix)
+    ARCHIVE_GCS_BUCKET: ${ARCHIVE_GCS_BUCKET}
+    # Trỏ đến file credentials đã mount vào container
+    GOOGLE_APPLICATION_CREDENTIALS: /opt/airflow/gcp-credentials.json
+
+  volumes:
+    # Mount toàn bộ project vào container để DAG import được src/ và scripts/
+    - .:/opt/airflow/project:ro
+    # File GCP credentials (read-only, không cần ghi)
+    - ./gcp-credentials_realtime.json:/opt/airflow/gcp-credentials.json:ro
+    # Data lake: ghi Parquet ra volume này, persist trên máy host
+    - airflow_data_lake:/opt/airflow/data_lake
+    # Logs của Airflow
+    - airflow_logs:/opt/airflow/logs
+
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+
+services:
+  # ─── PostgreSQL: Metadata DB cho Airflow ─────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: airflow-postgres
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - airflow_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      retries: 5
+    restart: unless-stopped
+
+  # ─── Init: Chạy 1 lần để setup DB và tạo user admin ─────────────────────────
+  airflow-init:
+    <<: *airflow-common
+    container_name: airflow-init
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        pip install google-cloud-bigquery google-cloud-bigquery-storage google-cloud-storage pandas pyarrow --quiet
+        airflow db migrate
+        airflow users create \
+          --username admin \
+          --password admin \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email admin@fraud-platform.local || true
+        echo "Airflow initialized successfully."
+    restart: "no"
+
+  # ─── Webserver: Giao diện http://localhost:8080 ───────────────────────────────
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: airflow-webserver
+    command: >
+      bash -c "pip install google-cloud-bigquery google-cloud-bigquery-storage google-cloud-storage pandas pyarrow --quiet && airflow webserver"
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  # ─── Scheduler: Engine chạy DAG theo lịch ────────────────────────────────────
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: airflow-scheduler
+    command: >
+      bash -c "pip install google-cloud-bigquery google-cloud-bigquery-storage google-cloud-storage pandas pyarrow --quiet && airflow scheduler"
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+
+volumes:
+  airflow_postgres_data:
+  airflow_logs:
+  airflow_data_lake:    # Parquet files được lưu ở đây (persist kể cả khi container restart)
