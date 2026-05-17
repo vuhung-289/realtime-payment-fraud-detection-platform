@@ -1,10 +1,10 @@
-# 🛡️ Real-time Payment Fraud Detection Platform
+# Real-time Payment Fraud Detection Platform
 
 > **Production-style data engineering project** — detects high-risk payments in near real-time using Kafka, Spark Structured Streaming, BigQuery, Airflow, and Streamlit.
 
 ---
 
-## 📌 Problem Statement
+## Problem Statement
 
 Payment fraud often surfaces as patterns over short time windows: velocity spikes (rapid successive transactions), geo anomalies (activity from unfamiliar countries), or a new device paired with a large amount.
 
@@ -12,7 +12,7 @@ This platform continuously ingests transaction events, computes streaming risk f
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 Payment Events
@@ -67,7 +67,7 @@ Payment Events
 
 ---
 
-## ⚙️ Tech Stack
+## Tech Stack
 
 | Layer | Technology | Version |
 |-------|-----------|---------|
@@ -82,7 +82,7 @@ Payment Events
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```text
 realtime-payment-fraud-detection-platform/
@@ -117,7 +117,7 @@ realtime-payment-fraud-detection-platform/
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
@@ -215,7 +215,7 @@ python scripts/archive_old_transactions.py
 
 ---
 
-## 🔄 Airflow — Nightly Archive Pipeline
+## Airflow — Nightly Archive Pipeline
 
 The pipeline runs automatically at **2:00 AM** every night with 3 tasks:
 
@@ -245,7 +245,7 @@ python scripts/archive_old_transactions.py
 
 ---
 
-## 🧠 Risk Scoring Engine
+## Risk Scoring Engine
 
 The engine in `src/common/risk_rules.py` scores each transaction using deterministic rules:
 
@@ -277,7 +277,7 @@ The engine in `src/common/risk_rules.py` scores each transaction using determini
 
 ---
 
-## 🗄️ BigQuery Schema
+## BigQuery Schema
 
 | Table | Description |
 |-------|-------------|
@@ -288,7 +288,7 @@ The engine in `src/common/risk_rules.py` scores each transaction using determini
 
 ---
 
-## 🔒 Data Quality & Reliability
+## Data Quality & Reliability
 
 - **Schema validation**: Events are validated and normalized immediately on ingestion from Kafka.
 - **Deduplication**: `dropDuplicates(["transaction_id"])` with a 10-minute watermark.
@@ -298,7 +298,7 @@ The engine in `src/common/risk_rules.py` scores each transaction using determini
 
 ---
 
-## 🧪 Testing
+## Testing
 
 ```bash
 pytest -q
@@ -308,7 +308,7 @@ Tests focus on the **risk scoring engine** (`tests/test_risk_rules.py`).
 
 ---
 
-## 🔮 Future Improvements
+## Future Improvements
 
 - [ ] Schema Registry + Avro/Protobuf contract
 - [ ] Replace heuristic country/device checks with a stateful feature store
@@ -319,7 +319,7 @@ Tests focus on the **risk scoring engine** (`tests/test_risk_rules.py`).
 
 ---
 
-## 🎯 Data Engineering Highlights
+## Data Engineering Highlights
 
 - **End-to-end streaming pipeline**: from Kafka ingestion → BigQuery serving → BI dashboard.
 - **Explainable fraud scoring**: every transaction carries `risk_reasons` explaining why it was flagged.

@@ -8,3 +8,13 @@ checkpoints/
 *.log
 .DS_Store
 data_lake/
+
+# GCP credentials — NEVER commit these
+*.json
+gcp-credentials*.json
+
+# Hadoop binaries
+hadoop/
+
+# Local walkthrough notes
+walkthrough.md
