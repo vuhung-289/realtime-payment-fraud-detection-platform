@@ -55,7 +55,7 @@ KAFKA_TOPIC_PAYMENTS=payments_raw         # Tên "kênh" trên Kafka
 GCP_PROJECT_ID=your-gcp-project-id       # Project Google Cloud
 BIGQUERY_DATASET=fraud_analytics          # Tên dataset BigQuery
 GOOGLE_APPLICATION_CREDENTIALS=...        # File key xác thực GCP
-PRODUCER_EVENTS_PER_SECOND=20            # Tốc độ sinh event
+PRODUCER_EVENTS_PER_SECOND=5            # Tốc độ sinh event
 ALERT_RISK_THRESHOLD=75                  # Ngưỡng cảnh báo (0-100)
 ```
 
@@ -68,20 +68,36 @@ ALERT_RISK_THRESHOLD=75                  # Ngưỡng cảnh báo (0-100)
 
 ```yaml
 services:
-  zookeeper:    # Quản lý Kafka cluster
+  zookeeper:
     image: confluentinc/cp-zookeeper:7.5.3
-    ports: ["2181:2181"]
+    container_name: fraud-zookeeper
+    restart: unless-stopped
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
 
-  kafka:        # Message broker chính
+  kafka:
     image: confluentinc/cp-kafka:7.5.3
-    depends_on: [zookeeper]
-    ports: ["9092:9092"]   # Port để app kết nối
+    container_name: fraud-kafka
+    restart: unless-stopped
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
 ```
 
 **Giải thích:**
-- **Zookeeper** = "quản lý" của Kafka, theo dõi ai đang kết nối, topic nào tồn tại
-- **Kafka** = "băng chuyền" chính, nhận và phân phối message
-- Chỉ cần gõ `docker compose up -d` là có cả hệ thống messaging chạy
+- **Zookeeper**: Thành phần quản lý cấu hình trạng thái của cụm Kafka.
+- **Kafka**: Trạm trung chuyển message chính (Message Broker), được thiết lập để kết nối từ bên ngoài máy host (port 9092) cũng như kết nối nội bộ trong mạng Docker (port 29092).
+- Thêm cấu hình `restart: unless-stopped` giúp dịch vụ tự khởi động lại khi có lỗi xảy ra.
 
 ---
 
@@ -293,22 +309,21 @@ tests/
 
 ---
 
-### Bước 7 — Docs & Scripts (`docs/`, `scripts/`)
+### Bước 7 — Scripts vận hành (`scripts/`)
 
-```
-docs/
-├── architecture.md    ← Giải thích kiến trúc và design choices
-└── runbook.md         ← Hướng dẫn vận hành + xử lý sự cố
+Để tự động hóa việc khởi chạy và dọn dẹp các stack dịch vụ phức tạp trong môi trường local, ta tạo các script PowerShell hỗ trợ:
 
+```text
 scripts/
-└── start_local.ps1    ← Script PowerShell chạy tất cả 1 lệnh
+├── start_local.ps1    ← Khởi chạy tự động tất cả các stack (Kafka, Airflow, Spark, Producer, Dashboard) chỉ bằng 1 lệnh duy nhất
+└── stop_local.ps1     ← Dọn dẹp và dừng sạch sẽ toàn bộ container Docker đang chạy ngầm của dự án
 ```
 
 ---
 
 ## Phần 3: Tóm tắt thứ tự tạo
 
-```
+```text
 Bước 0: Khởi tạo project
   ├── .gitignore, .env.example, requirements.txt, README.md
   └── docker-compose.yml
@@ -332,9 +347,8 @@ Bước 5: Dashboard (hiển thị kết quả)
 Bước 6: Tests
   └── tests/test_risk_rules.py
 
-Bước 7: Documentation & Scripts
-  ├── docs/architecture.md, docs/runbook.md
-  └── scripts/start_local.ps1
+Bước 7: Scripts vận hành chuyên nghiệp
+  └── scripts/start_local.ps1, scripts/stop_local.ps1
 ```
 
 > [!IMPORTANT]

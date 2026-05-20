@@ -1,3 +1,10 @@
+import sys
+from pathlib import Path
+
+# Ensure project root is in sys.path
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
 import json
 import os
 
@@ -44,6 +51,7 @@ def main() -> None:
         .option("kafka.bootstrap.servers", settings.kafka_bootstrap_servers)
         .option("subscribe", settings.kafka_topic_payments)
         .option("startingOffsets", "latest")
+        .option("failOnDataLoss", "false")
         .load()
     )
 

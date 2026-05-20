@@ -90,12 +90,10 @@ realtime-payment-fraud-detection-platform/
 │   └── archive_fraud_data_dag.py     # Airflow DAG: nightly archive pipeline
 ├── dashboard/
 │   └── app.py                        # Streamlit BI dashboard
-├── docs/
-│   ├── architecture.md               # Architecture notes and design decisions
-│   └── runbook.md                    # Operations runbook
 ├── scripts/
 │   ├── archive_old_transactions.py   # Archive script + user profile upsert
-│   └── start_local.ps1               # PowerShell helper to start local stack
+│   ├── start_local.ps1               # Automated startup script (launches all stacks)
+│   └── stop_local.ps1                # Automated cleanup script (stops Docker stacks)
 ├── sql/
 │   └── bigquery_tables.sql           # BigQuery DDL statements
 ├── src/
@@ -155,7 +153,7 @@ KAFKA_TOPIC_PAYMENTS=payments_raw
 ALERT_RISK_THRESHOLD=75           # Transactions with score >= 75 go to fraud_alerts
 
 # Producer
-PRODUCER_EVENTS_PER_SECOND=20
+PRODUCER_EVENTS_PER_SECOND=5
 
 # Archival / Data Lake
 ARCHIVE_DAYS_THRESHOLD=29         # Archive transactions older than 29 days
@@ -169,49 +167,68 @@ ARCHIVE_GCS_BUCKET=               # Leave empty to skip GCS upload
 
 Run the DDL in the **BigQuery Console**:
 
-```
+```sql
 sql/bigquery_tables.sql
 ```
 
 ---
 
-### Step 3 — Start Kafka (Docker)
+### Step 3 — Run the Entire System
 
-```bash
-docker compose up -d
+You can run the platform using the automated PowerShell scripts or step-by-step manually.
+
+#### Option A: Automated (Recommended for Windows)
+
+Open a PowerShell terminal and run:
+
+```powershell
+.\scripts\start_local.ps1
 ```
 
----
+This single command will:
+1. Start Zookeeper & Kafka via Docker.
+2. Wait 15 seconds, then spin up the Apache Airflow stack via Docker.
+3. Wait 5 seconds, then start the **Spark Streaming Job** in a new window.
+4. Wait 8 seconds, then launch the **Payment Event Producer** in a new window.
+5. Launch the **Streamlit Dashboard** in another window (accessible at http://localhost:8501).
 
-### Step 4 — Run the Pipeline
+To stop and clean up all Docker containers when finished, run:
 
-Open **4 separate terminals**:
-
-**Terminal 1 — Event Producer:**
-```bash
-.venv\Scripts\activate
-python src/producer/payment_event_producer.py
+```powershell
+.\scripts\stop_local.ps1
 ```
 
-**Terminal 2 — Spark Streaming Job:**
-```bash
-.venv\Scripts\activate
-python src/streaming/fraud_streaming_job.py
-```
+#### Option B: Step-by-Step Manual Launch
 
-**Terminal 3 — Streamlit Dashboard:**
-```bash
-.venv\Scripts\activate
-streamlit run dashboard/app.py
-```
+If you prefer to start components individually or are on a non-Windows platform:
 
-> Dashboard opens automatically at **http://localhost:8501**
+1. **Start Zookeeper & Kafka**:
+   ```bash
+   docker compose up -d
+   ```
 
-**Terminal 4 (optional) — Manual archive run:**
-```bash
-.venv\Scripts\activate
-python scripts/archive_old_transactions.py
-```
+2. **Start Spark Streaming Job**:
+   ```bash
+   .venv\Scripts\activate
+   python src/streaming/fraud_streaming_job.py
+   ```
+
+3. **Start Payment Event Producer**:
+   ```bash
+   .venv\Scripts\activate
+   python src/producer/payment_event_producer.py
+   ```
+
+4. **Start Streamlit Dashboard**:
+   ```bash
+   .venv\Scripts\activate
+   streamlit run dashboard/app.py
+   ```
+
+5. **Start Airflow Stack**:
+   ```bash
+   docker compose -f docker-compose.airflow.yml up -d
+   ```
 
 ---
 
@@ -247,16 +264,19 @@ python scripts/archive_old_transactions.py
 
 ## Risk Scoring Engine
 
-The engine in `src/common/risk_rules.py` scores each transaction using deterministic rules:
+The engine in `src/common/risk_rules.py` scores each transaction using deterministic, expert-defined rules:
 
-| Rule | Trigger Condition | Score Added |
-|------|------------------|-----------| 
-| Amount spike | `amount > 3× avg_amount_30m` | +40 |
-| Velocity spike | `tx_count_5m > 10` within a 5-minute window | +30 |
-| New country + high amount | Unfamiliar country and `amount > 1,000` | +25 |
-| New device + high amount | New device and `amount > 500` | +20 |
-| Failed payment burst | `failed_count_5m >= 3` consecutive failures | +35 |
-| International transfer | `is_international == true` | +10 |
+| Rule | Trigger Condition | Score Added | Risk Reason Code |
+|------|------------------|:---:|------------------|
+| Amount spike | `amount > 3× avg_amount_30m` | **+30** | `amount_spike_vs_user_baseline` |
+| High transaction amount | `amount >= 2,000` (and no amount spike) | **+20** | `high_transaction_amount` |
+| High velocity transactions | `tx_count_5m >= 6` in a 5-minute window | **+25** | `high_velocity_transactions` |
+| Failed payment burst | `failed_count_5m >= 3` consecutive failures | **+20** | `failed_payment_burst` |
+| New country + high amount | `is_new_country == true` and `amount >= 300` | **+15** | `new_country_with_nontrivial_amount` |
+| New device + high amount | `is_new_device == true` and `amount >= 300` | **+10** | `new_device_with_nontrivial_amount` |
+| International payment risk | `is_international == true` and `amount >= 500` | **+10** | `international_payment_risk` |
+
+*Note: The total raw score is capped (clamped) at **100**.*
 
 **Output per transaction:**
 
@@ -264,16 +284,20 @@ The engine in `src/common/risk_rules.py` scores each transaction using determini
 {
   "risk_score": 75,
   "risk_band": "high",
-  "risk_reasons": ["amount_spike", "new_country_high_amount"]
+  "risk_reasons": [
+    "amount_spike_vs_user_baseline",
+    "high_velocity_transactions",
+    "failed_payment_burst"
+  ]
 }
 ```
 
 | `risk_band` | `risk_score` Range |
 |-------------|-------------------|
-| `low` | 0 – 24 |
-| `medium` | 25 – 49 |
-| `high` | 50 – 74 |
-| `critical` | 75 – 100 |
+| `low` | 0 – 39 |
+| `medium` | 40 – 69 |
+| `high` | 70 – 84 |
+| `critical` | 85 – 100 |
 
 ---
 
@@ -293,6 +317,7 @@ The engine in `src/common/risk_rules.py` scores each transaction using determini
 - **Schema validation**: Events are validated and normalized immediately on ingestion from Kafka.
 - **Deduplication**: `dropDuplicates(["transaction_id"])` with a 10-minute watermark.
 - **Event-time processing**: Watermark-based windowing correctly handles late-arriving events.
+- **Fail on data loss**: Set `failOnDataLoss` to `false` for resilience against Kafka log offsets being discarded.
 - **Idempotent archive**: Archive script is safe to re-run — verifies file existence before writing.
 - **Retry logic**: Airflow tasks retry up to 2 times with a 15-minute delay on failure.
 
@@ -308,21 +333,10 @@ Tests focus on the **risk scoring engine** (`tests/test_risk_rules.py`).
 
 ---
 
-## Future Improvements
-
-- [ ] Schema Registry + Avro/Protobuf contract
-- [ ] Replace heuristic country/device checks with a stateful feature store
-- [ ] ML model serving integration (Vertex AI / MLflow)
-- [ ] CI/CD pipeline: tests + linting + Docker image build
-- [ ] Streaming ML inference to replace the rule-based engine
-- [ ] Automatic GCS upload for all Parquet archive output
-
----
-
 ## Data Engineering Highlights
 
 - **End-to-end streaming pipeline**: from Kafka ingestion → BigQuery serving → BI dashboard.
 - **Explainable fraud scoring**: every transaction carries `risk_reasons` explaining why it was flagged.
 - **Data lifecycle management**: Airflow DAG automatically archives and rolls up data to control BigQuery costs.
-- **Production-minded practices**: schema contract, watermarking, deduplication, idempotency, retry logic, runbook.
+- **Production-minded practices**: schema contract, watermarking, deduplication, idempotency, retry logic.
 - **Modular architecture**: straightforward to extend with an ML model or swap out the rule engine.

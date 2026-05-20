@@ -7,14 +7,26 @@ logs/
 checkpoints/
 *.log
 .DS_Store
+Thumbs.db
 data_lake/
 
-# GCP credentials — NEVER commit these
-*.json
+# GCP credentials — NEVER commit these (use specific patterns instead of ignoring all *.json)
 gcp-credentials*.json
+*credentials*.json
+*secret*.json
+*key*.json
 
 # Hadoop binaries
 hadoop/
+
+# PySpark local artifacts
+spark-warehouse/
+metastore_db/
+derby.log
+
+# IDE configurations
+.vscode/
+.idea/
 
 # Local walkthrough notes
 walkthrough.md
